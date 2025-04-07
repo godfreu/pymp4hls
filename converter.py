@@ -2,9 +2,23 @@ import os
 import subprocess
 import glob
 import time
-import shutil  # Tambahkan ini
+import shutil
+from dotenv import load_dotenv
 
-def convert_to_hls(input_folder, output_folder, resolutions):
+# Load environment variables
+load_dotenv()
+
+def convert_to_hls(input_folder=None, output_folder=None, resolutions=None):
+    # Use environment variables if parameters are not provided
+    if input_folder is None:
+        input_folder = os.getenv('INPUT_FOLDER', '/pymp4hls/videos/input')
+    
+    if output_folder is None:
+        output_folder = os.getenv('OUTPUT_FOLDER', '/pymp4hls/videos/output')
+    
+    if resolutions is None:
+        resolutions_str = os.getenv('RESOLUTIONS', '1080,720,480')
+        resolutions = [int(res) for res in resolutions_str.split(',')]
 
     if not os.path.exists(input_folder):
         print(f"Error: Folder input '{input_folder}' tidak ditemukan.")
@@ -78,7 +92,8 @@ def convert_to_hls(input_folder, output_folder, resolutions):
             ])
 
         # 4. OPSI HLS LAINNYA
-        master_playlist_path = os.path.join(output_dir, "master.m3u8")
+        master_playlist_name = f"{basename}.m3u8"
+        master_playlist_path = os.path.join(output_dir, master_playlist_name)
 
         var_stream_map_str = ""
         for i in range(len(resolutions)):
@@ -88,7 +103,7 @@ def convert_to_hls(input_folder, output_folder, resolutions):
 
         ffmpeg_command.extend([
             "-hls_segment_filename", os.path.join(output_dir, f"stream_%v/data%03d.ts"),
-            "-master_pl_name", "master.m3u8",
+            "-master_pl_name", master_playlist_name,
             "-var_stream_map", var_stream_map_str,
             f"{output_dir}/stream_%v/playlist.m3u8" # <--- Path playlist relatif thd master
         ])
@@ -113,8 +128,10 @@ def get_bitrate(resolution):
         return 2800
     elif resolution >= 480:
         return 1400
+    elif resolution >= 360:
+        return 800   # adjust as needed
     else:
-        return 600 # Sesuaikan
+        return 500   # for 240p, adjust as needed
 
 def get_audio_bitrate(stream_index): # <--- Fungsi baru
     """Menentukan bitrate audio berdasarkan stream index."""
@@ -126,11 +143,14 @@ def get_audio_bitrate(stream_index): # <--- Fungsi baru
         return 96
 
 if __name__ == "__main__":
-    input_folder = "/Users/g.e.bayualfian/Documents/GOK/Code/pymp4hls/courses/input"
-    output_folder = "/Users/g.e.bayualfian/Documents/GOK/Code/pymp4hls/courses/output"
-    resolutions = [1080, 720, 480]
+    # Get values from environment variables
+    input_folder = os.getenv('INPUT_FOLDER', '/pymp4hls/videos/input')
+    output_folder = os.getenv('OUTPUT_FOLDER', '/pymp4hls/videos/output')
+    resolutions_str = os.getenv('RESOLUTIONS', '1080,720,480')
+    resolutions = [int(res) for res in resolutions_str.split(',')]
+    check_interval = int(os.getenv('CONVERTER_CHECK_INTERVAL', '60'))
 
     while True:
-      convert_to_hls(input_folder, output_folder, resolutions)
-      print("Menunggu 60 detik untuk pengecekan video baru...")
-      time.sleep(60)
+        convert_to_hls(input_folder, output_folder, resolutions)
+        print(f"Menunggu {check_interval} detik untuk pengecekan video baru...")
+        time.sleep(check_interval)
