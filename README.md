@@ -16,7 +16,7 @@ A complete Python pipeline for fetching, downloading, converting MP4 videos to H
 
 ## System Components
 
-1. **URL Scraper** (`urlscrapper.py`):  
+1. **URL Scraper** (`urlscraper.py`):  
    Fetches video URLs from the database and appends new entries to:
    - The primary CSV file (`mp4hls-videos.csv`)
    - Batch files in the `urls/` folder (e.g., `urlscrapped_batch-1.csv`)
@@ -98,7 +98,7 @@ mkdir -p videos/input videos/output urls uploads
 ### 1. Run URL Scraper
 Fetch video URLs from your database (without updating their status) and record them:
 ```bash
-python urlscrapper.py
+python urlscraper.py
 ```
 
 ### 2. Run Downloader
@@ -122,7 +122,7 @@ python uploader.py
 ## How It Works
 
 1. **URL Scraping**:  
-   `urlscrapper.py`:
+   `urlscraper.py`:
    - Connects to your MySQL database using credentials from `.env`.
    - Fetches video URLs (using `DB_SELECT_QUERY`) that are pending.
    - Checks existing CSV files (main and batched) to avoid duplicates.
