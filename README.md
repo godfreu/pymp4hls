@@ -1,37 +1,45 @@
 # PyMP4HLS
-
-A complete Python pipeline for fetching, downloading, converting MP4 videos to HTTP Live Streaming (HLS) format, and uploading to S3 storage.
+A complete Python pipeline for fetching, downloading, converting MP4 videos to HTTP Live Streaming (HLS) format, and uploading them to S3 storage, with automatic database updates.
 
 ## Features
-
 - **Database Integration**: Automatically fetches video URLs from a MySQL database.
 - **URL-Based Downloads**: Downloads videos from URLs specified in CSV files.
 - **Automatic Video Processing**: Monitors folders for new videos.
-- **Multi-Resolution Output**: Generates multiple quality levels (1080p, 720p, 480p by default).
+- **Multi-Resolution Output**: Generates multiple quality levels (1080p, 720p, 480p, 360p, 240p).
 - **Adaptive Streaming**: Creates HLS playlists for adaptive bitrate streaming.
-- **Processed File Management**: Automatically moves processed files to prevent reprocessing.
+- **Processed File Management**: Manages CSV batch records and prevents duplicate processing.
 - **Cloud Storage**: Uploads processed HLS content to an Amazon S3 bucket.
-- **Duplicate Prevention**: Maintains batch records to ensure no URL is processed twice.
+- **Database Updates**: Updates database records to replace original MP4 paths with new HLS paths.
 - **dotenv Support**: All configuration values are loaded via environment variables.
 
 ## System Components
+1. **URL Scraper (`s1-urlscraper.py`)**  
+   - Connects to your MySQL database using credentials from the `.env` file.
+   - Fetches new video URLs (using `DB_SELECT_QUERY`), filtering out duplicates by checking existing CSV files.
+   - Appends new URLs to the main CSV (`mp4hls-videos.csv`) and creates batch files in the `urls/` folder.
 
-1. **URL Scraper** (`urlscraper.py`):  
-   Fetches video URLs from the database and appends new entries to:
-   - The primary CSV file (`mp4hls-videos.csv`)
-   - Batch files in the `urls/` folder (e.g., `urlscrapped_batch-1.csv`)
+2. **Downloader (`s2-downloader.py`)**  
+   - Reads video URLs from the CSV file.
+   - Downloads the videos into the `videos/input/` folder.
+   - Manages file processing to prevent re-downloading.
 
-2. **Downloader** (`downloader.py`):  
-   Reads URLs from the CSV file, downloads videos to the input folder, and manages processed file tracking.
+3. **Converter (`s3-converter.py`)**  
+   - Monitors `videos/input/` for new MP4s.
+   - Converts videos to HLS format (generating multi-resolution output).
+   - Organizes output in `videos/output/` and moves processed videos to a subfolder.
 
-3. **Converter** (`converter.py`):  
-   Monitors the input folder, converts MP4s to multi-resolution HLS using FFmpeg, and moves processed videos.
+4. **Uploader (`s4-uploader.py`)**  
+   - Scans the `videos/output/` folder for complete HLS directories.
+   - Uploads the entire HLS folder (including the master `.m3u8` playlist and all `.ts` segments) to an S3 bucket.
+   - Creates batch records (`uploaded-*.csv`) in the `uploads/` folder to log successful uploads.
 
-4. **Uploader** (`uploader.py`):  
-   Scans the output folder for HLS directories, uploads the content to an S3 bucket, and creates batch records (e.g., `uploaded-1.csv`) in the `uploads/` folder.
+5. **URL Updater (`s5-urlupdater.py`)**  
+   - Reads CSV batch files from the `uploads/` folder.
+   - Constructs new HLS paths (e.g., `path/to/hls/hls.m3u8`) based on the HLS directory name.
+   - Updates the `course_lessons` table by replacing the original MP4 `content_url` with the new HLS path.
+   - Marks batch files as processed to avoid re-updating.
 
 ## Requirements
-
 - **Python 3.10-3.12** (3.12.x recommended)
 - **FFmpeg** (must be installed on your system)
 - **MySQL Database** (for URL scraping)
@@ -44,7 +52,6 @@ A complete Python pipeline for fetching, downloading, converting MP4 videos to H
   - boto3
 
 ## Installation
-
 ### 1. Clone the Repository
 ```bash
 git clone https://github.com/godfreu/pymp4hls.git
@@ -75,67 +82,42 @@ nano .env
 ### 5. Ensure FFmpeg is Installed
 - **macOS**: `brew install ffmpeg`
 - **Ubuntu/Debian**: `sudo apt install ffmpeg`
-- **Windows**: Download from [ffmpeg.org](https://ffmpeg.org/download.html)
+- **Windows**: Download from ffmpeg.org (https://ffmpeg.org/download.html)
 
 ## Directory Structure
-
 Make sure to create these directories if they do not exist:
-```
+``` bash
 pymp4hls/
 ├── videos/
 │   ├── input/
 │   └── output/
+├── logs/
 ├── urls/
 └── uploads/
 ```
 You can create them manually or run:
 ```bash
-mkdir -p videos/input videos/output urls uploads
+mkdir -p videos/input videos/output urls uploads logs
 ```
 
 ## Usage
-
-### 1. Run URL Scraper
-Fetch video URLs from your database (without updating their status) and record them:
-```bash
-python urlscraper.py
+Run Python scripts & maintain SSH tunnel
+### Make the shell script executable (if not already)
+``` bash
+chmod +x run.sh
 ```
-
-### 2. Run Downloader
-Download videos from the URLs in the CSV:
-```bash
-python downloader.py
+### Run all scripts in the background
+``` bash
+./run.sh &
 ```
-
-### 3. Run Converter
-Convert downloaded videos to HLS:
-```bash
-python converter.py
+### Stop all running scripts
+``` bash
+pkill -f run.sh s1-urlscraper.py s2-downloader.py s3-converter.py s4-uploader.py s5-urlupdater.py
 ```
-
-### 4. Run Uploader
-Upload HLS output to the S3 bucket:
-```bash
-python uploader.py
+### Check all running scripts
+``` bash
+pgrep -af run.sh s1-urlscraper.py s2-downloader.py s3-converter.py s4-uploader.py s5-urlupdater.py
 ```
-
-## How It Works
-
-1. **URL Scraping**:  
-   `urlscraper.py`:
-   - Connects to your MySQL database using credentials from `.env`.
-   - Fetches video URLs (using `DB_SELECT_QUERY`) that are pending.
-   - Checks existing CSV files (main and batched) to avoid duplicates.
-   - Writes new URLs into `mp4hls-videos.csv` and creates a batch file in the `urls/` folder.
-
-2. **Downloading** (`downloader.py`):  
-   Reads from `mp4hls-videos.csv` and downloads videos to the `videos/input/` folder.
-
-3. **Converting** (`converter.py`):  
-   Monitors `videos/input/` for new MP4s, converts them using FFmpeg, and moves the originals to a `processed` subfolder.
-
-4. **Uploading** (`uploader.py`):  
-   Scans `videos/output/` for complete HLS directories, uploads them to S3, and then logs the upload in a batch CSV file in the `uploads/` folder.
 
 ## Environment Variables Example
 Below is an example of the configuration in your `.env` file:
@@ -162,28 +144,20 @@ S3_REGION=us-east-1
 S3_PREFIX=hls/
 
 # Application Settings
-RESOLUTIONS=1080,720,480
+RESOLUTIONS=1080,720,480,360,240
 CONVERTER_CHECK_INTERVAL=60
 DOWNLOADER_CHECK_INTERVAL=60
 DOWNLOADER_LONG_INTERVAL=300
-UPLOAD_CHECK_INTERVAL=300
+CHECK_INTERVAL=300
 ```
 
 ## Customization
 
 - **Resolutions & Bitrates**:  
-  Adjust the `RESOLUTIONS` variable in `.env` and tweak functions in `converter.py` as needed.
+  Adjust the `RESOLUTIONS` variable in `.env` and tweak functions in `s3-converter.py` as needed.
 
 - **HLS Settings**:  
-  Modify FFmpeg flags in `converter.py` (e.g., `-hls_time`) to change segment duration.
+  Modify FFmpeg flags in `s3-converter.py` (e.g., `-hls_time`) to change segment duration.
 
 - **Database Query**:  
   Customize `DB_SELECT_QUERY` in your `.env` file if your database schema is different.
-
-## License
-
-[Specify your License Here]
-
----
-
-This README.md now provides clear setup and usage instructions while ensuring that all configuration is handled by dotenv.

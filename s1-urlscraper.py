@@ -7,25 +7,59 @@ import glob
 from datetime import datetime
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
+# Force load from the specific path
+env_path = os.path.join(os.path.dirname(__file__), '.env')
+load_dotenv(env_path)
+
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler("urlscraper.log"),
+        logging.FileHandler("logs/s1-urlscraper.log"),
         logging.StreamHandler()
     ]
 )
 logger = logging.getLogger()
 
-def connect_to_database(config):
-    """Connect to MySQL database using the provided configuration."""
+def connect_to_database():
+    """Connect to MySQL database using environment variables."""
     try:
-        connection = mysql.connector.connect(**config)
-        logger.info("Successfully connected to MySQL database")
+        # Force log the values to see what's happening
+        host = os.environ.get('DB_HOST')
+        user = os.environ.get('DB_USER') 
+        password = os.environ.get('DB_PASSWORD')
+        database = os.environ.get('DB_NAME')
+        
+        # Log values
+        logger.info(f"Environment variables:")
+        logger.info(f"DB_HOST = {host}")
+        logger.info(f"DB_USER = {user}")
+        logger.info(f"DB_NAME = {database}")
+        
+        # DEBUG: Print the raw DB_PORT value
+        raw_port = os.getenv('DB_PORT', '3306')
+        logger.info(f"Raw DB_PORT value: {raw_port}")
+        
+        # Handle bad port value
+        try:
+            port = int(raw_port)
+        except ValueError:
+            logger.warning(f"Invalid DB_PORT value: '{raw_port}', using default 13306")
+            port = 13306
+        
+        logger.info(f"Attempting to connect to MySQL at {host}:{port}...")
+        
+        connection = mysql.connector.connect(
+            host=host,
+            port=port,
+            user=user,
+            password=password,
+            database=database
+        )
+        
+        logger.info(f"Successfully connected to MySQL database at {host}:{port}")
         return connection
     except mysql.connector.Error as err:
         logger.error(f"Error connecting to MySQL: {err}")
@@ -81,6 +115,9 @@ def fetch_video_urls(connection, query, processed_urls):
     """Fetch video URLs from database using the provided query,
     excluding already processed URLs."""
     try:
+        # Log the SQL query for debugging
+        logger.info(f"Executing SQL query: {query}")
+        
         cursor = connection.cursor(dictionary=True)
         cursor.execute(query)
         results = cursor.fetchall()
@@ -90,11 +127,14 @@ def fetch_video_urls(connection, query, processed_urls):
             logger.info("No new videos found in database")
             return []
             
+        # Log results structure for debugging
+        if results:
+            logger.info(f"First result structure: {list(results[0].keys())}")
+            
         logger.info(f"Found {len(results)} video(s) in database")
         
-        # Extract URLs from results
-        # Note: Adjust the column name if your query returns differently named columns
-        all_urls = [row['video_url'] for row in results if 'video_url' in row]
+        # Extract URLs from results - use the correct column name
+        all_urls = [row['full_url'] for row in results if 'full_url' in row]
         
         # Filter out already processed URLs
         new_urls = [url for url in all_urls if url not in processed_urls]
@@ -148,30 +188,18 @@ def update_csv_files(main_csv, new_urls):
         return None
 
 def main():
-    # Database configuration
-    db_config = {
-        'host': os.getenv('DB_HOST', 'localhost'),
-        'user': os.getenv('DB_USER', ''),
-        'password': os.getenv('DB_PASSWORD', ''),
-        'database': os.getenv('DB_NAME', '')
-    }
-    
-    # Query to fetch video URLs
-    select_query = os.getenv('DB_SELECT_QUERY', """
-    SELECT video_url FROM videos 
-    WHERE status = 'pending' 
-    LIMIT 10
-    """)
-    
-    main_csv = os.getenv('MAIN_CSV_PATH', "/pymp4hls/mp4hls-videos.csv")
-    
     # Get all previously processed URLs from main CSV and all batch files
     processed_urls = get_all_processed_urls()
     
-    # Connect to database
-    connection = connect_to_database(db_config)
+    # Connect to database - modified call without passing config dict
+    connection = connect_to_database()
     if not connection:
         return
+    
+    # Get query from environment
+    select_query = os.getenv('DB_SELECT_QUERY')
+    
+    main_csv = os.getenv('MAIN_CSV_PATH', "/pymp4hls/mp4hls-videos.csv")
     
     try:
         # Fetch new URLs from database (filtering out already processed ones)
@@ -203,5 +231,6 @@ if __name__ == "__main__":
         logger.info(f"Completed URL scraper in {duration}")
         
         # Wait before next check
-        logger.info("Waiting 5 minutes before next database check...")
-        time.sleep(300)  # 5 minutes
+        check_interval = int(os.getenv('CHECK_INTERVAL', '300'))
+        logger.info(f"Waiting {check_interval} seconds before next database check...")
+        time.sleep(check_interval)

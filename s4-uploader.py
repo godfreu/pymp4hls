@@ -16,7 +16,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler("uploader.log"),
+        logging.FileHandler("logs/s4-uploader.log"),
         logging.StreamHandler()
     ]
 )
@@ -202,6 +202,6 @@ if __name__ == "__main__":
         logger.info(f"Completed S3 uploader in {duration}")
         
         # Wait before next check
-        wait_time = int(os.getenv('UPLOAD_CHECK_INTERVAL', 300))  # Default 5 minutes
-        logger.info(f"Waiting {wait_time} seconds before next check...")
-        time.sleep(wait_time)
+        check_interval = int(os.getenv('CHECK_INTERVAL', 300))  # Default 5 minutes
+        logger.info(f"Waiting {check_interval} seconds before next check...")
+        time.sleep(check_interval)
