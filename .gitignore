@@ -61,4 +61,4 @@ Thumbs.db
 # Project specific
 processed/
 temp/
-urls/*.csv
+urls/*
