@@ -86,7 +86,7 @@ def upload_directory_to_s3(s3_client, local_dir, hls_name):
         logger.error("S3_BUCKET_NAME not set in environment variables")
         return False
         
-    s3_prefix = os.getenv('S3_PREFIX', 'hls/')
+    s3_prefix = os.getenv('S3_PREFIX', 'opt/courses/')
     base_s3_path = f"{s3_prefix}{hls_name}"
     
     try:
@@ -95,7 +95,7 @@ def upload_directory_to_s3(s3_client, local_dir, hls_name):
             for filename in files:
                 # Construct local and S3 paths
                 local_path = os.path.join(root, filename)
-                relative_path = os.path.relpath(local_path, os.path.dirname(local_dir))
+                relative_path = os.path.relpath(local_path, local_dir)  # Calculate relative to local_dir itself
                 s3_path = f"{base_s3_path}/{relative_path}"
                 
                 # Upload the file
