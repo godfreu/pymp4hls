@@ -139,6 +139,69 @@ def record_uploaded_batch(uploaded_hls_list):
     logger.info(f"Created upload record batch #{batch_num} with {len(uploaded_hls_list)} items in {batch_file}")
     return batch_num
 
+def is_hls_conversion_complete(hls_dir):
+    """
+    Check if an HLS directory is fully converted and ready for upload
+    by verifying all expected files are present.
+    """
+    master_playlist = os.path.join(hls_dir, f"{os.path.basename(hls_dir)}.m3u8")
+    
+    # 1. Check master playlist exists
+    if not os.path.exists(master_playlist):
+        logger.info(f"Master playlist missing for {os.path.basename(hls_dir)}")
+        return False
+        
+    # 2. Read master playlist to check for expected streams
+    try:
+        with open(master_playlist, 'r') as f:
+            content = f.read()
+            
+        # 3. Make sure the master playlist references stream directories
+        stream_refs = [line for line in content.splitlines() if "stream_" in line]
+        if not stream_refs:
+            logger.info(f"No stream references found in master playlist for {os.path.basename(hls_dir)}")
+            return False
+            
+        # 4. Check each referenced stream directory exists and has content
+        for stream_ref in stream_refs:
+            # Extract stream path from playlist line
+            stream_path = stream_ref.split('/')[-2]  # Assumes format like: stream_0/playlist.m3u8
+            stream_dir = os.path.join(hls_dir, stream_path)
+            
+            if not os.path.isdir(stream_dir):
+                logger.info(f"Stream directory {stream_path} missing for {os.path.basename(hls_dir)}")
+                return False
+                
+            # 5. Check stream has a playlist
+            stream_playlist = os.path.join(stream_dir, "playlist.m3u8")
+            if not os.path.exists(stream_playlist):
+                logger.info(f"Stream playlist missing for {stream_path} in {os.path.basename(hls_dir)}")
+                return False
+                
+            # 6. Check stream has segment files
+            segment_files = glob.glob(os.path.join(stream_dir, "*.ts"))
+            if not segment_files:
+                logger.info(f"No segment files found for {stream_path} in {os.path.basename(hls_dir)}")
+                return False
+                
+            # 7. Check stream playlist references the segment files that exist
+            with open(stream_playlist, 'r') as f:
+                playlist_content = f.read()
+                
+            # Count .ts segments referenced in the playlist
+            ts_refs = len([line for line in playlist_content.splitlines() if line.endswith(".ts")])
+            # Compare with actual .ts files
+            if ts_refs != len(segment_files):
+                logger.info(f"Playlist references {ts_refs} segments but found {len(segment_files)} for {stream_path}")
+                return False
+        
+        # 8. If we passed all checks, the HLS directory is complete
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error validating HLS directory {os.path.basename(hls_dir)}: {e}")
+        return False
+
 def main():
     """Main function to scan output folder and upload HLS files"""
     # Get configuration from environment variables
@@ -156,11 +219,13 @@ def main():
     # Scan output folder for HLS directories
     hls_dirs = []
     for item in os.listdir(output_folder):
-        if os.path.isdir(os.path.join(output_folder, item)):
-            # Check if this is an HLS directory (has .m3u8 file named after the directory)
-            master_playlist = os.path.join(output_folder, item, f"{item}.m3u8")
-            if os.path.exists(master_playlist):
+        item_path = os.path.join(output_folder, item)
+        if os.path.isdir(item_path):
+            # Check if this is a complete HLS directory
+            if is_hls_conversion_complete(item_path):
                 hls_dirs.append(item)
+            else:
+                logger.info(f"Skipping incomplete HLS directory: {item}")
     
     if not hls_dirs:
         logger.info("No HLS directories found for upload")
@@ -181,7 +246,7 @@ def main():
     successful_uploads = []
     for hls_name in new_hls_dirs:
         local_dir = os.path.join(output_folder, hls_name)
-        if upload_directory_to_s3(s3_client, local_dir, hls_name):
+        if is_hls_conversion_complete(local_dir) and upload_directory_to_s3(s3_client, local_dir, hls_name):
             successful_uploads.append(hls_name)
     
     # Record successfully uploaded HLS
