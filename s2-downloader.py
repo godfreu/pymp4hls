@@ -22,6 +22,32 @@ logging.basicConfig(
 )
 logger = logging.getLogger()
 
+def get_file_extension_from_headers(url):
+    """Determine file extension based on Content-Type header"""
+    try:
+        response = requests.head(url, timeout=5)
+        content_type = response.headers.get('Content-Type', '')
+        
+        # Map content types to file extensions
+        content_type_map = {
+            'video/mp4': '.mp4',
+            'video/quicktime': '.mov',
+            'video/x-msvideo': '.avi',
+            'video/x-matroska': '.mkv',
+            'video/webm': '.webm',
+            'video/x-flv': '.flv',
+            'video/x-ms-wmv': '.wmv'
+        }
+        
+        for mime, ext in content_type_map.items():
+            if mime in content_type:
+                return ext
+                
+        return None
+    except Exception as e:
+        logger.error(f"Error getting content type: {e}")
+        return None
+
 def download_video(csv_file=None, download_folder=None, processed_folder=None):
     # Use environment variables if parameters are not provided
     if csv_file is None:
@@ -57,9 +83,22 @@ def download_video(csv_file=None, download_folder=None, processed_folder=None):
             content_url = row.get('content_url')
             if content_url:
                 try:
+                    # Extract filename from URL and remove query parameters
                     filename = os.path.basename(content_url).split("?")[0]
-                    if not filename.lower().endswith(".mp4"):
-                        filename += ".mp4"
+                    
+                    # Check if filename has a recognized video extension
+                    valid_extensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.flv', '.wmv']
+                    has_valid_extension = any(filename.lower().endswith(ext) for ext in valid_extensions)
+                    
+                    if not has_valid_extension:
+                        ext = get_file_extension_from_headers(content_url)
+                        if ext:
+                            filename += ext
+                        elif 'mp4' in content_url.lower():
+                            filename += '.mp4'
+                        else:
+                            logger.warning(f"Could not determine file type for {content_url}, defaulting to .mp4")
+                            filename += '.mp4'
                     
                     filepath = os.path.join(download_folder, filename)
                     processed_filepath = os.path.join(processed_folder, filename)

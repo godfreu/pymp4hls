@@ -46,21 +46,24 @@ def convert_to_hls(input_folder=None, output_folder=None, resolutions=None):
         os.makedirs(processed_folder)
         logger.info(f"Processed folder '{processed_folder}' dibuat.")
 
-    mp4_files = glob.glob(os.path.join(input_folder, "*.mp4"))
+    video_extensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.flv', '.wmv']
+    video_files = []
+    for ext in video_extensions:
+        video_files.extend(glob.glob(os.path.join(input_folder, f"*{ext}")))
 
-    if not mp4_files:
-        logger.info("Tidak ada file MP4 ditemukan di folder input.")
+    if not video_files:
+        logger.info("No video files found in input folder.")
         return
 
-    for mp4_file in mp4_files:
-        basename = os.path.splitext(os.path.basename(mp4_file))[0]
+    for video_file in video_files:
+        basename = os.path.splitext(os.path.basename(video_file))[0]
         output_dir = os.path.join(output_folder, basename)
         os.makedirs(output_dir, exist_ok=True)
 
-        logger.info(f"Memproses: {mp4_file}  ->  {output_dir}")
+        logger.info(f"Processing: {video_file} -> {output_dir}")
         
         # Check if file has audio before building command
-        has_audio = check_for_audio_stream(mp4_file)
+        has_audio = check_for_audio_stream(video_file)
         logger.info(f"File {basename} has audio: {has_audio}")
 
         # 1. Build filter_complex string
@@ -79,7 +82,7 @@ def convert_to_hls(input_folder=None, output_folder=None, resolutions=None):
         # 2. Build ffmpeg command
         ffmpeg_command = [
             "ffmpeg",
-            "-i", mp4_file,
+            "-i", video_file,
             "-filter_complex", filter_complex,  # Use filter_complex
             "-profile:v", "baseline",
             "-level", "3.0",
@@ -130,15 +133,17 @@ def convert_to_hls(input_folder=None, output_folder=None, resolutions=None):
         try:
             logger.info(f"Executing FFmpeg command for {basename}: {' '.join(ffmpeg_command)}")
             result = subprocess.run(ffmpeg_command, check=True, capture_output=True, text=True)
-            logger.info(f"Konversi selesai: {basename}")
-            # Optionally log FFmpeg output for debugging:
-            logger.debug(result.stdout)
-            logger.debug(result.stderr)
-
-            # Move processed MP4 file
-            shutil.move(mp4_file, os.path.join(processed_folder, os.path.basename(mp4_file)))
-            logger.info(f"File {mp4_file} dipindahkan ke: {processed_folder}")
-
+            logger.info(f"FFmpeg process completed for: {basename}")
+            
+            # Verify HLS conversion is complete before moving source file
+            if is_hls_conversion_complete(output_dir, basename, resolutions):
+                logger.info(f"Konversi selesai: {basename}")
+                # Move processed video file only when conversion is verified
+                shutil.move(video_file, os.path.join(processed_folder, os.path.basename(video_file)))
+                logger.info(f"File {video_file} moved to: {processed_folder}")
+            else:
+                logger.error(f"HLS conversion for {basename} appears incomplete. Original file not moved.")
+            
         except subprocess.CalledProcessError as e:
             logger.error(f"Error saat mengonversi {basename}:")
             logger.error(e.stderr)
@@ -183,6 +188,56 @@ def check_for_audio_stream(video_file):
         logger.error(f"Error checking for audio stream: {e}")
         # Default to True to avoid breaking existing behavior when probe fails
         return True
+
+def is_hls_conversion_complete(output_dir, basename, resolutions):
+    """
+    Verify that all expected HLS files exist after conversion.
+    """
+    try:
+        # 1. Check if master playlist exists
+        master_playlist = os.path.join(output_dir, f"{basename}.m3u8")
+        if not os.path.exists(master_playlist):
+            logger.warning(f"Master playlist missing for {basename}")
+            return False
+            
+        # 2. Check each stream directory and its contents
+        for i in range(len(resolutions)):
+            stream_dir = os.path.join(output_dir, f"stream_{i}")
+            
+            # Check if stream directory exists
+            if not os.path.isdir(stream_dir):
+                logger.warning(f"Stream directory stream_{i} missing for {basename}")
+                return False
+                
+            # Check if stream playlist exists
+            stream_playlist = os.path.join(stream_dir, "playlist.m3u8")
+            if not os.path.exists(stream_playlist):
+                logger.warning(f"Stream playlist missing for stream_{i} in {basename}")
+                return False
+                
+            # Check if there are segment files
+            segment_files = glob.glob(os.path.join(stream_dir, "*.ts"))
+            if not segment_files:
+                logger.warning(f"No segment files found for stream_{i} in {basename}")
+                return False
+                
+            # Check playlist references match actual files
+            with open(stream_playlist, 'r') as f:
+                playlist_content = f.read()
+                
+            # Count .ts segments referenced in the playlist
+            ts_refs = len([line for line in playlist_content.splitlines() if line.endswith(".ts")])
+            # Compare with actual .ts files
+            if ts_refs != len(segment_files):
+                logger.warning(f"Playlist references {ts_refs} segments but found {len(segment_files)} for stream_{i}")
+                return False
+                
+        # All checks passed
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error verifying HLS conversion for {basename}: {e}")
+        return False
 
 if __name__ == "__main__":
     # Get values from environment variables
