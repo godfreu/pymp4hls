@@ -89,20 +89,15 @@ def find_uploaded_videos():
                 
                 if hls_name:
                     # Build the metadata needed for database updates
-                    s3_bucket = os.getenv('S3_BUCKET_NAME', 'gk-hls')
-                    s3_region = os.getenv('S3_REGION', 'ap-southeast-1')
                     s3_prefix = os.getenv('S3_PREFIX', 'opt/courses/')
                     
-                    # Construct the S3 URL for the HLS playlist
-                    hls_path = f"{s3_prefix}{hls_name}/{hls_name}.m3u8"  # Just the path part
+                    # Construct the S3 URL path for the HLS playlist (single folder level)
+                    hls_path = f"{s3_prefix}{hls_name}/{hls_name}.m3u8"  # Format: opt/courses/video-name/video-name.m3u8
                     
-                    # Try to determine original_url from hls_name
-                    # This assumes hls_name is based on the original MP4 filename
-                    original_url = f"https://staging-static.gokampus.com/{hls_name}.mp4"
-                    
+                    # We don't actually need to construct the original_url here,
+                    # since we'll match database records by the filename portion
                     hls_videos.append({
                         'hls_name': hls_name,
-                        'original_url': original_url,
                         'hls_url': hls_path,
                         'upload_time': upload_time,
                         'batch_file': batch_file
@@ -114,41 +109,56 @@ def find_uploaded_videos():
     
     return hls_videos
 
-def update_database_record(connection, original_url, hls_path):
+def update_database_record(connection, hls_name, hls_path):
+    """
+    Update database records with HLS URLs for matching video files
+    
+    Args:
+        connection: Database connection
+        hls_name: The basename of the HLS file (without extension)
+        hls_path: New HLS path to set in content_url
+    """
     try:
         cursor = connection.cursor()
         
-        # Extract the relative path from original_url
-        if "https://staging-static.gokampus.com/" in original_url:
-            relative_path = original_url.replace("https://staging-static.gokampus.com/", "")
-        else:
-            relative_path = os.path.basename(original_url)
-        
-        # SQL to update the original_content_url and content_url
+        # SQL query to update records with the matching video filename
+        # Use LIKE with % wildcards to match regardless of the path structure
         query = """
         UPDATE course_lessons 
         SET original_content_url = content_url, 
             content_url = %s 
-        WHERE content_url LIKE %s AND deleted_at IS NULL
+        WHERE content_url LIKE %s 
+          AND (
+            content_url LIKE '%.mp4%' OR 
+            content_url LIKE '%.mov%' OR 
+            content_url LIKE '%.avi%' OR
+            content_url LIKE '%.mkv%' OR
+            content_url LIKE '%.webm%' OR
+            content_url LIKE '%.flv%' OR
+            content_url LIKE '%.wmv%'
+          )
+          AND content_url NOT LIKE '%.m3u8%' 
+          AND deleted_at IS NULL
         """
         
-        # Use just the HLS path, not the full URL
-        cursor.execute(query, (hls_path, f"%{relative_path}%"))
+        # Execute with path-independent matching pattern
+        # This will match the filename regardless of folder structure
+        cursor.execute(query, (hls_path, f"%/{hls_name}.%"))
         rows_affected = cursor.rowcount
         connection.commit()
         
         if rows_affected > 0:
-            logger.info(f"Updated {rows_affected} record(s). Original URL: {original_url}, New HLS URL: {hls_path}")
+            logger.info(f"Updated {rows_affected} record(s). Video: {hls_name}, New HLS URL: {hls_path}")
             return True
         else:
-            logger.warning(f"No records found for URL: {original_url}")
+            logger.warning(f"No records found for video: {hls_name}")
             return False
             
     except mysql.connector.Error as err:
-        logger.error(f"Database error when updating record for {original_url}: {err}")
+        logger.error(f"Database error when updating record for {hls_name}: {err}")
         return False
     finally:
-        if 'cursor' in locals() and cursor is not None:
+        if cursor:
             cursor.close()
 
 def process_batch_file(connection, batch_files):
@@ -196,10 +206,11 @@ def main():
         processed_batch_files = set()
         
         for video in uploaded_videos:
-            original_url = video.get('original_url')
+            hls_name = video.get('hls_name')
             hls_url = video.get('hls_url')
             
-            if update_database_record(connection, original_url, hls_url):
+            # Use hls_name directly since that's what we need to match in the database
+            if update_database_record(connection, hls_name, hls_url):
                 update_count += 1
                 # Remember which batch files we've processed
                 if 'batch_file' in video:

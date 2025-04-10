@@ -95,7 +95,11 @@ def upload_directory_to_s3(s3_client, local_dir, hls_name):
             for filename in files:
                 # Construct local and S3 paths
                 local_path = os.path.join(root, filename)
-                relative_path = os.path.relpath(local_path, local_dir)  # Calculate relative to local_dir itself
+                relative_path = os.path.relpath(local_path, local_dir)
+
+                # Normalize path separators for S3 (replace backslashes with forward slashes)
+                relative_path = relative_path.replace('\\', '/')
+
                 s3_path = f"{base_s3_path}/{relative_path}"
                 
                 # Upload the file
