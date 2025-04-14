@@ -4,6 +4,7 @@ import time
 import logging
 import pandas as pd
 import boto3
+import shutil  # Add import for directory removal
 from botocore.exceptions import ClientError
 from datetime import datetime
 from dotenv import load_dotenv
@@ -29,7 +30,7 @@ def get_s3_client():
             's3',
             aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
             aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY'),
-            region_name=os.getenv('S3_REGION', 'us-east-1')
+            region_name=os.getenv('S3_REGION', 'ap-southeast-3')
         )
         return s3_client
     except Exception as e:
@@ -206,10 +207,38 @@ def is_hls_conversion_complete(hls_dir):
         logger.error(f"Error validating HLS directory {os.path.basename(hls_dir)}: {e}")
         return False
 
+def delete_uploaded_hls_directories(output_folder, successful_uploads):
+    """
+    Delete HLS directories that have been successfully uploaded to S3.
+    
+    Args:
+        output_folder: Path to the output folder containing HLS directories
+        successful_uploads: List of HLS directory names that were uploaded
+    
+    Returns:
+        int: Number of successfully deleted directories
+    """
+    deleted_count = 0
+    
+    for hls_name in successful_uploads:
+        hls_dir = os.path.join(output_folder, hls_name)
+        try:
+            if os.path.exists(hls_dir) and os.path.isdir(hls_dir):
+                shutil.rmtree(hls_dir)
+                logger.info(f"Deleted local HLS directory after successful upload: {hls_dir}")
+                deleted_count += 1
+            else:
+                logger.warning(f"HLS directory not found for deletion: {hls_dir}")
+        except Exception as e:
+            logger.error(f"Error deleting HLS directory {hls_dir}: {e}")
+    
+    return deleted_count
+
 def main():
     """Main function to scan output folder and upload HLS files"""
     # Get configuration from environment variables
     output_folder = os.getenv('OUTPUT_FOLDER', '/pymp4hls/videos/output')
+    delete_after_upload = os.getenv('DELETE_UPLOADED_HLS', 'true').lower() == 'true'
     
     # Get list of already uploaded HLS
     uploaded_hls = get_already_uploaded_hls()
@@ -256,10 +285,19 @@ def main():
     # Record successfully uploaded HLS
     if successful_uploads:
         record_uploaded_batch(successful_uploads)
+        
+        # Delete local HLS directories if configured to do so
+        if delete_after_upload:
+            deleted_count = delete_uploaded_hls_directories(output_folder, successful_uploads)
+            logger.info(f"Deleted {deleted_count} of {len(successful_uploads)} local HLS directories")
     
     logger.info(f"Upload process completed. {len(successful_uploads)} of {len(new_hls_dirs)} directories uploaded successfully.")
 
 if __name__ == "__main__":
+    # Log the delete setting when starting
+    delete_setting = os.getenv('DELETE_UPLOADED_HLS', 'false').lower() == 'true'
+    logger.info(f"Starting S3 uploader (Delete uploaded HLS: {delete_setting})")
+    
     while True:
         start_time = datetime.now()
         logger.info(f"Starting S3 uploader at {start_time}")

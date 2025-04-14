@@ -48,6 +48,66 @@ def get_file_extension_from_headers(url):
         logger.error(f"Error getting content type: {e}")
         return None
 
+def get_downloaded_videos(csv_path):
+    """
+    Read the CSV file containing the list of downloaded videos.
+    Creates the CSV if it doesn't exist.
+    
+    Returns:
+        set: A set of video URLs that have already been downloaded
+    """
+    downloaded_videos = set()
+    
+    # Create directory if it doesn't exist
+    os.makedirs(os.path.dirname(csv_path), exist_ok=True)
+    
+    # Create the CSV file if it doesn't exist
+    if not os.path.exists(csv_path):
+        with open(csv_path, 'w', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(['content_url', 'filename', 'download_date'])
+        logger.info(f"Created new downloaded videos CSV: {csv_path}")
+        return downloaded_videos
+        
+    # Read the existing CSV file
+    try:
+        df = pd.read_csv(csv_path)
+        if not df.empty and 'content_url' in df.columns:
+            downloaded_videos = set(df['content_url'].tolist())
+        return downloaded_videos
+    except Exception as e:
+        logger.error(f"Error reading downloaded videos CSV: {e}")
+        return downloaded_videos
+
+def add_downloaded_video(csv_path, content_url, filename):
+    """
+    Add a newly downloaded video to the CSV.
+    
+    Args:
+        csv_path: Path to the CSV file
+        content_url: The URL of the downloaded video
+        filename: The filename the video was saved as
+    """
+    try:
+        # Read existing data
+        if os.path.exists(csv_path):
+            df = pd.read_csv(csv_path)
+        else:
+            df = pd.DataFrame(columns=['content_url', 'filename', 'download_date'])
+        
+        # Add new entry
+        new_row = pd.DataFrame({
+            'content_url': [content_url],
+            'filename': [filename],
+            'download_date': [datetime.now().strftime('%Y-%m-%d %H:%M:%S')]
+        })
+        
+        df = pd.concat([df, new_row], ignore_index=True)
+        df.to_csv(csv_path, index=False)
+        logger.info(f"Added {filename} to downloaded videos CSV")
+    except Exception as e:
+        logger.error(f"Error adding to downloaded videos CSV: {e}")
+
 def download_video(csv_file=None, download_folder=None, processed_folder=None):
     # Use environment variables if parameters are not provided
     if csv_file is None:
@@ -59,6 +119,11 @@ def download_video(csv_file=None, download_folder=None, processed_folder=None):
     if processed_folder is None:
         processed_folder = os.path.join(download_folder, "processed")
 
+    # Path to the downloads directory and downloaded videos CSV
+    downloads_dir = os.getenv('DOWNLOADS_DIR', 'downloads')
+    downloaded_csv = os.path.join(downloads_dir, 'downloaded-videos.csv')
+
+    # Create necessary directories
     if not os.path.exists(download_folder):
         os.makedirs(download_folder)
         logger.info(f"Folder download '{download_folder}' dibuat.")
@@ -68,13 +133,17 @@ def download_video(csv_file=None, download_folder=None, processed_folder=None):
         logger.info(f"Folder processed '{processed_folder}' dibuat.")
 
     try:
+        # Get the list of already downloaded videos
+        downloaded_videos = get_downloaded_videos(downloaded_csv)
+        logger.info(f"Found {len(downloaded_videos)} previously downloaded videos")
+        
         # Read the CSV file with pandas for easier manipulation
         df = pd.read_csv(csv_file)
         if df.empty:
             logger.info("CSV file is empty. No videos to download.")
             return False
             
-        downloads_performed = False  # Flag untuk melacak apakah ada download
+        downloads_performed = False  # Flag to track if any downloads occurred
         
         # Create a list to track rows to remove
         rows_to_remove = []
@@ -82,6 +151,12 @@ def download_video(csv_file=None, download_folder=None, processed_folder=None):
         for index, row in df.iterrows():
             content_url = row.get('content_url')
             if content_url:
+                # Check if this URL has already been downloaded
+                if content_url in downloaded_videos:
+                    logger.info(f"Video already downloaded: {content_url}. Skipping.")
+                    rows_to_remove.append(index)
+                    continue
+                    
                 try:
                     # Extract filename from URL and remove query parameters
                     filename = os.path.basename(content_url).split("?")[0]
@@ -101,13 +176,6 @@ def download_video(csv_file=None, download_folder=None, processed_folder=None):
                             filename += '.mp4'
                     
                     filepath = os.path.join(download_folder, filename)
-                    processed_filepath = os.path.join(processed_folder, filename)
-
-                    if os.path.exists(filepath) or os.path.exists(processed_filepath):
-                        logger.info(f"File '{filename}' sudah ada (di input atau processed). Melewati.")
-                        # Add to rows to remove since it's already processed
-                        rows_to_remove.append(index)
-                        continue
 
                     logger.info(f"Downloading video: {content_url}")
                     response = requests.get(content_url, stream=True)
@@ -116,8 +184,12 @@ def download_video(csv_file=None, download_folder=None, processed_folder=None):
                     with open(filepath, 'wb') as outfile:
                         for chunk in response.iter_content(chunk_size=8192):
                             outfile.write(chunk)
+                    
                     logger.info(f"Video '{filename}' berhasil diunduh ke '{download_folder}'")
                     downloads_performed = True
+                    
+                    # Add to downloaded videos CSV
+                    add_downloaded_video(downloaded_csv, content_url, filename)
                     
                     # Add this row to the list of rows to remove
                     rows_to_remove.append(index)

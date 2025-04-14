@@ -4,6 +4,9 @@ import glob
 import time
 import shutil
 import logging
+import csv
+import pandas as pd
+from datetime import datetime
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -20,6 +23,70 @@ logging.basicConfig(
 )
 logger = logging.getLogger()
 
+def get_converted_videos(csv_path):
+    """
+    Read the CSV file containing the list of converted videos.
+    Creates the CSV if it doesn't exist.
+    
+    Returns:
+        set: A set of video filenames that have already been converted
+    """
+    converted_videos = set()
+    
+    # Create directory if it doesn't exist
+    os.makedirs(os.path.dirname(csv_path), exist_ok=True)
+    
+    # Create the CSV file if it doesn't exist
+    if not os.path.exists(csv_path):
+        with open(csv_path, 'w', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(['original_filename', 'hls_name', 'conversion_date', 'status', 'original_deleted'])
+        logger.info(f"Created new converted videos CSV: {csv_path}")
+        return converted_videos
+        
+    # Read the existing CSV file
+    try:
+        df = pd.read_csv(csv_path)
+        if not df.empty and 'original_filename' in df.columns:
+            converted_videos = set(df['original_filename'].tolist())
+        return converted_videos
+    except Exception as e:
+        logger.error(f"Error reading converted videos CSV: {e}")
+        return converted_videos
+
+def add_converted_video(csv_path, original_filename, hls_name, status="success", original_deleted=False):
+    """
+    Add a newly converted video to the CSV.
+    
+    Args:
+        csv_path: Path to the CSV file
+        original_filename: The original video filename
+        hls_name: The name of the HLS directory
+        status: Conversion status ('success' or 'failed')
+        original_deleted: Whether the original file was deleted
+    """
+    try:
+        # Read existing data
+        if os.path.exists(csv_path):
+            df = pd.read_csv(csv_path)
+        else:
+            df = pd.DataFrame(columns=['original_filename', 'hls_name', 'conversion_date', 'status', 'original_deleted'])
+        
+        # Add new entry
+        new_row = pd.DataFrame({
+            'original_filename': [original_filename],
+            'hls_name': [hls_name],
+            'conversion_date': [datetime.now().strftime('%Y-%m-%d %H:%M:%S')],
+            'status': [status],
+            'original_deleted': [original_deleted]
+        })
+        
+        df = pd.concat([df, new_row], ignore_index=True)
+        df.to_csv(csv_path, index=False)
+        logger.info(f"Added {original_filename} to converted videos CSV")
+    except Exception as e:
+        logger.error(f"Error adding to converted videos CSV: {e}")
+
 def convert_to_hls(input_folder=None, output_folder=None, resolutions=None):
     # Use environment variables if parameters are not provided
     if input_folder is None:
@@ -29,22 +96,34 @@ def convert_to_hls(input_folder=None, output_folder=None, resolutions=None):
         output_folder = os.getenv('OUTPUT_FOLDER', '/pymp4hls/videos/output')
     
     if resolutions is None:
-        resolutions_str = os.getenv('RESOLUTIONS', '1080,720,480')
+        resolutions_str = os.getenv('RESOLUTIONS', '1080,720,480, 360, 240')
         resolutions = [int(res) for res in resolutions_str.split(',')]
     
+    # Path to the conversions directory and converted videos CSV
+    conversions_dir = os.getenv('CONVERSIONS_DIR', 'conversions')
+    os.makedirs(conversions_dir, exist_ok=True)
+    converted_csv = os.path.join(conversions_dir, 'converted-videos.csv')
+    
+    # Option to delete original files instead of moving to processed
+    delete_originals = os.getenv('DELETE_ORIGINAL_VIDEOS', 'false').lower() == 'true'
+    
+    # Get the list of already converted videos
+    converted_videos = get_converted_videos(converted_csv)
+    logger.info(f"Found {len(converted_videos)} previously converted videos")
+    
     if not os.path.exists(input_folder):
-        logger.error(f"Error: Folder input '{input_folder}' tidak ditemukan.")
+        logger.error(f"Error: Input folder '{input_folder}' not found.")
         return
 
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
-        logger.info(f"Folder output '{output_folder}' dibuat.")
+        logger.info(f"Output folder '{output_folder}' created.")
 
     # Create processed folder if it doesn't exist
     processed_folder = os.path.join(input_folder, "processed")
     if not os.path.exists(processed_folder):
         os.makedirs(processed_folder)
-        logger.info(f"Processed folder '{processed_folder}' dibuat.")
+        logger.info(f"Processed folder '{processed_folder}' created.")
 
     video_extensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.flv', '.wmv']
     video_files = []
@@ -57,6 +136,13 @@ def convert_to_hls(input_folder=None, output_folder=None, resolutions=None):
 
     for video_file in video_files:
         basename = os.path.splitext(os.path.basename(video_file))[0]
+        filename = os.path.basename(video_file)
+        
+        # Skip if video has already been converted
+        if filename in converted_videos:
+            logger.info(f"Video {filename} already converted. Skipping.")
+            continue
+            
         output_dir = os.path.join(output_folder, basename)
         os.makedirs(output_dir, exist_ok=True)
 
@@ -77,19 +163,20 @@ def convert_to_hls(input_folder=None, output_folder=None, resolutions=None):
             if width % 2 != 0:
                 width -= 1
             filter_complex += f" [v{i}]scale=w={width}:h={res}[v{i}out];"
-        filter_complex = filter_complex.rstrip(';')  # Remove the trailing semicolon
+        filter_complex = filter_complex.rstrip(';')  # Remove trailing semicolon
 
         # 2. Build ffmpeg command
         ffmpeg_command = [
             "ffmpeg",
             "-i", video_file,
-            "-filter_complex", filter_complex,  # Use filter_complex
+            "-filter_complex", filter_complex,
             "-profile:v", "baseline",
             "-level", "3.0",
             "-hls_time", "10",
             "-hls_list_size", "0",
             "-f", "hls",
         ]
+        
         # 3. Append mapping, codec, and bitrate options
         for i, res in enumerate(resolutions):
             ffmpeg_command.extend([
@@ -135,18 +222,43 @@ def convert_to_hls(input_folder=None, output_folder=None, resolutions=None):
             result = subprocess.run(ffmpeg_command, check=True, capture_output=True, text=True)
             logger.info(f"FFmpeg process completed for: {basename}")
             
-            # Verify HLS conversion is complete before moving source file
+            # Verify HLS conversion is complete before handling source file
             if is_hls_conversion_complete(output_dir, basename, resolutions):
-                logger.info(f"Konversi selesai: {basename}")
-                # Move processed video file only when conversion is verified
-                shutil.move(video_file, os.path.join(processed_folder, os.path.basename(video_file)))
-                logger.info(f"File {video_file} moved to: {processed_folder}")
+                logger.info(f"Conversion successful: {basename}")
+                
+                # Record successful conversion in CSV
+                original_deleted = False
+                
+                # Handle the original file based on configuration
+                if delete_originals:
+                    # Delete the original file
+                    try:
+                        os.remove(video_file)
+                        logger.info(f"Deleted original video file: {video_file}")
+                        original_deleted = True
+                    except Exception as e:
+                        logger.error(f"Error deleting original file {video_file}: {e}")
+                else:
+                    # Move to processed folder
+                    try:
+                        shutil.move(video_file, os.path.join(processed_folder, filename))
+                        logger.info(f"Moved original file to: {processed_folder}")
+                    except Exception as e:
+                        logger.error(f"Error moving original file {video_file}: {e}")
+                
+                # Record in CSV after handling the file
+                add_converted_video(converted_csv, filename, basename, "success", original_deleted)
+                
             else:
-                logger.error(f"HLS conversion for {basename} appears incomplete. Original file not moved.")
+                logger.error(f"HLS conversion for {basename} appears incomplete. Original file not touched.")
+                # Record failed conversion
+                add_converted_video(converted_csv, filename, basename, "failed", False)
             
         except subprocess.CalledProcessError as e:
-            logger.error(f"Error saat mengonversi {basename}:")
+            logger.error(f"Error converting {basename}:")
             logger.error(e.stderr)
+            # Record failed conversion
+            add_converted_video(converted_csv, filename, basename, "failed", False)
 
 def get_bitrate(resolution):
     """Return appropriate video bitrate based on resolution."""
@@ -248,7 +360,9 @@ if __name__ == "__main__":
     check_interval = int(os.getenv('CONVERTER_CHECK_INTERVAL', '60'))
 
     logger.info("Starting converter.py")
+    logger.info(f"Delete originals mode: {os.getenv('DELETE_ORIGINAL_VIDEOS', 'false')}")
+    
     while True:
         convert_to_hls(input_folder, output_folder, resolutions)
-        logger.info(f"Menunggu {check_interval} detik untuk pengecekan video baru...")
+        logger.info(f"Waiting {check_interval} seconds for new videos...")
         time.sleep(check_interval)
