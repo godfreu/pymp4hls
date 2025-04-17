@@ -59,8 +59,8 @@ def find_uploaded_videos():
     Find videos that have been successfully uploaded to S3 by reading the CSV batch files.
     Returns a list of dictionaries with hls_name, upload_time, etc.
     """
-    uploads_dir = os.getenv('UPLOADS_DIR', 'uploads')
-    processed_marker = os.getenv('PROCESSED_MARKER_DIR', os.path.join(uploads_dir, 'processed'))
+    uploads_dir = os.getenv('UPLOADS_DIR', './uploads')
+    processed_marker = os.getenv('PROCESSED_MARKER_DIR', os.path.join(uploads_dir, '/processed'))
     os.makedirs(processed_marker, exist_ok=True)
     
     hls_videos = []
@@ -163,8 +163,8 @@ def update_database_record(connection, hls_name, hls_path):
 
 def process_batch_file(connection, batch_files):
     """Mark batch files as processed after all their entries have been handled."""
-    uploads_dir = os.getenv('UPLOADS_DIR', 'uploads')
-    processed_marker = os.getenv('PROCESSED_MARKER_DIR', os.path.join(uploads_dir, 'processed'))
+    uploads_dir = os.getenv('UPLOADS_DIR', './uploads')
+    processed_marker = os.getenv('PROCESSED_MARKER_DIR', os.path.join(uploads_dir, '/processed'))
     
     for batch_file in batch_files:
         batch_name = os.path.basename(batch_file)
