@@ -47,8 +47,15 @@ def get_converted_videos(csv_path):
     # Read the existing CSV file
     try:
         df = pd.read_csv(csv_path)
+        # Current logic collects all videos regardless of status
         if not df.empty and 'original_filename' in df.columns:
             converted_videos = set(df['original_filename'].tolist())
+
+        # Change to this to enable automatic retry of failed conversions:
+        if not df.empty and 'original_filename' in df.columns and 'status' in df.columns:
+            # Only skip videos that were successfully converted
+            successful_videos = df[df['status'] == 'success']
+            converted_videos = set(successful_videos['original_filename'].tolist())
         return converted_videos
     except Exception as e:
         logger.error(f"Error reading converted videos CSV: {e}")

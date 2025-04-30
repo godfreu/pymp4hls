@@ -65,3 +65,4 @@ uploads/*
 logs/*
 downloads/*
 conversions/*
+.DS_Store
