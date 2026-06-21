@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """
 Sequential Pipeline Runner for Learnext (s1..s5)
 - Runs s1-urlscraper.py -> s2-downloader.py -> s3-converter.py -> s4-uploader.py -> s5-urlupdater.py
@@ -10,6 +10,7 @@ import os
 import sys
 import time
 import json
+import shutil
 import subprocess
 import signal
 from pathlib import Path
@@ -87,6 +88,46 @@ def log(msg: str):
     with open(LOG_DIR / "pipeline.log", "a", encoding="utf-8") as f:
         f.write(line + "\n")
 
+
+def resolve_step_python_cmd(script_path: Path) -> list[str]:
+    from_env = os.getenv("LEARNEXT_PYTHON")
+    if from_env:
+        return [from_env, str(script_path)]
+
+    candidates = []
+    active_venv = os.getenv("VIRTUAL_ENV")
+    if active_venv:
+        venv_path = Path(active_venv)
+        if sys.platform == "win32":
+            candidates.append(venv_path / "Scripts" / "python.exe")
+        candidates.append(venv_path / "bin" / "python")
+
+    for venv_name in ("venv", ".venv"):
+        base = PROJECT_ROOT / venv_name
+        if sys.platform == "win32":
+            candidates.append(base / "Scripts" / "python.exe")
+        candidates.append(base / "bin" / "python")
+
+    if sys.executable:
+        candidates.append(Path(sys.executable))
+
+    for candidate in candidates:
+        if candidate.exists():
+            return [str(candidate), str(script_path)]
+
+    python_in_path = shutil.which("python")
+    if python_in_path:
+        return [python_in_path, str(script_path)]
+
+    if sys.platform == "win32":
+        py_launcher = shutil.which("py")
+        if py_launcher:
+            return [py_launcher, "-3", str(script_path)]
+
+    raise FileNotFoundError(
+        "No Python interpreter found for pipeline steps. Set LEARNEXT_PYTHON."
+    )
+
 # ---------------------------------------------------------------------------
 # STEP RUNNER
 # ---------------------------------------------------------------------------
@@ -98,23 +139,28 @@ def run_step(script: str, state, index: int) -> bool:
     step.exit_code = 0
     state.save()
 
-    venv_python = PROJECT_ROOT / "venv" / "Scripts" / "python.exe"
-    if not venv_python.exists():
-        venv_python = PROJECT_ROOT / "venv" / "bin" / "python"
-
-    cmd = [str(venv_python), str(PROJECT_ROOT / script)]
+    cmd = resolve_step_python_cmd(PROJECT_ROOT / script)
     log(f"Running step {index+1}/{len(STEPS)}: {script}")
 
     # Open per-step log files
     out = open(LOG_DIR / f"{script}.stdout.log", "a", encoding="utf-8")
     err = open(LOG_DIR / f"{script}.stderr.log", "a", encoding="utf-8")
 
-    proc = subprocess.Popen(
-        cmd,
-        cwd=str(PROJECT_ROOT),
-        stdout=out,
-        stderr=err,
-    )
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(PROJECT_ROOT),
+            stdout=out,
+            stderr=err,
+        )
+    except FileNotFoundError as exc:
+        step.exit_code = 127
+        step.end_time = datetime.now().isoformat()
+        step.status = "failed"
+        state.save()
+        log(f"Failed to start {script}: {exc}")
+        return False
+
     step.pid = proc.pid
     state.save()
 

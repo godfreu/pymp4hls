@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """
 SSH Tunnel Manager for Learnext
 - Ensures a persistent SSH tunnel is active, with auto-reconnect.
