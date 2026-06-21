@@ -1,93 +1,126 @@
-#!/bin/bash
-# start.sh - Script to run the PyMP4HLS conversion pipeline
-# This script runs all 5 steps of the pipeline sequentially
+#!/usr/bin/env bash
+# start.sh - Run PyMP4HLS pipeline (agentic by default)
 
-# Working directory (where this script is located)
-SCRIPT_DIR=$(dirname "$(realpath "$0")")
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 cd "$SCRIPT_DIR"
 
-# Color formatting
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 BOLD='\033[1m'
 
-# Print a formatted message
 print_step() {
-    echo -e "${BLUE}${BOLD}=== STEP $1: $2 ===${NC}"
+  echo -e "${BLUE}${BOLD}=== STEP $1: $2 ===${NC}"
 }
 
 print_success() {
-    echo -e "${GREEN}${BOLD}✓ $1${NC}"
+  echo -e "${GREEN}${BOLD}✓ $1${NC}"
 }
 
 print_error() {
-    echo -e "${RED}${BOLD}✗ ERROR: $1${NC}"
+  echo -e "${RED}${BOLD}✗ ERROR: $1${NC}"
 }
 
 print_warning() {
-    echo -e "${YELLOW}${BOLD}! $1${NC}"
+  echo -e "${YELLOW}${BOLD}! $1${NC}"
 }
 
-# Load environment variables from .env file
-if [ -f .env ]; then
-    export $(grep -v '^#' .env | xargs)
-    echo -e "${GREEN}Loaded environment variables from .env${NC}"
-else
-    print_error ".env file not found. Please run setup.sh first."
-    exit 1
-fi
+resolve_python_cmd() {
+  if [ -n "${LEARNEXT_PYTHON:-}" ]; then
+    echo "$LEARNEXT_PYTHON"
+    return 0
+  fi
+  if [ -x "$SCRIPT_DIR/venv/Scripts/python.exe" ]; then
+    echo "$SCRIPT_DIR/venv/Scripts/python.exe"
+    return 0
+  fi
+  if [ -x "$SCRIPT_DIR/venv/bin/python" ]; then
+    echo "$SCRIPT_DIR/venv/bin/python"
+    return 0
+  fi
+  if command -v python >/dev/null 2>&1; then
+    command -v python
+    return 0
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    command -v python3
+    return 0
+  fi
+  return 1
+}
 
-# Ensure all required directories exist
-mkdir -p videos/input videos/output urls uploads logs downloads conversions
+run_legacy_pipeline() {
+  local py="$1"
+  local steps=(
+    "s1-urlscraper.py|URL Scraper"
+    "s2-downloader.py|Downloader"
+    "s3-converter.py|Converter"
+    "s4-uploader.py|Uploader"
+    "s5-urlupdater.py|URL Updater"
+  )
 
-# Helper function to run a script and check for errors
-run_script() {
-    local script_name=$1
-    local step_number=$2
-    local step_description=$3
-    
-    print_step "$step_number" "$step_description"
-    echo "Starting $script_name at $(date)"
-    
-    # Run the script
-    python3 "$script_name"
-    local exit_code=$?
-    
-    if [ $exit_code -eq 0 ]; then
-        print_success "$script_name completed successfully"
+  mkdir -p videos/input videos/output urls uploads logs downloads conversions
+
+  echo -e "${BOLD}Starting PyMP4HLS Legacy Pipeline at $(date)${NC}"
+  echo "Using Python: $py"
+  echo ""
+
+  local idx=1
+  for row in "${steps[@]}"; do
+    local script="${row%%|*}"
+    local desc="${row##*|}"
+    print_step "$idx" "$desc"
+    echo "Starting $script at $(date)"
+    if "$py" "$script"; then
+      print_success "$script completed successfully"
     else
-        print_error "$script_name failed with exit code $exit_code"
-        echo -e "${YELLOW}Check logs/$(basename "$script_name" .py).log for details${NC}"
-        echo -e "${YELLOW}Pipeline will continue with the next step${NC}"
+      local exit_code=$?
+      print_error "$script failed with exit code $exit_code"
+      echo -e "${YELLOW}Check logs/${script}.stderr.log for details${NC}"
     fi
-    
     echo ""
+    idx=$((idx + 1))
+  done
+
+  echo -e "${BOLD}Legacy pipeline completed at $(date)${NC}"
 }
 
-# Main pipeline execution
-echo -e "${BOLD}Starting PyMP4HLS Pipeline at $(date)${NC}"
-echo "Working directory: $SCRIPT_DIR"
-echo "Log files will be stored in: $SCRIPT_DIR/logs/"
-echo ""
+main() {
+  local python_cmd
+  python_cmd="$(resolve_python_cmd || true)"
+  if [ -z "${python_cmd:-}" ]; then
+    print_error "Python interpreter not found. Run ./setup.sh first."
+    exit 1
+  fi
 
-# Step 1: URL Scraper
-run_script "s1-urlscraper.py" "1" "URL Scraper"
+  export LEARNEXT_PYTHON="$python_cmd"
+  mkdir -p videos/input videos/output urls uploads logs downloads conversions
 
-# Step 2: Downloader
-run_script "s2-downloader.py" "2" "Downloader"
+  local agentic_script="$SCRIPT_DIR/.agents/skills/run_agentic.py"
+  local mode="${1:-agentic}"
 
-# Step 3: Converter
-run_script "s3-converter.py" "3" "Converter"
+  if [ "$mode" = "--legacy" ]; then
+    print_warning "Running legacy mode (s1..s5 directly)."
+    run_legacy_pipeline "$python_cmd"
+    return
+  fi
 
-# Step 4: Uploader
-run_script "s4-uploader.py" "4" "Uploader"
+  if [ ! -f "$agentic_script" ]; then
+    print_warning "Agentic runner not found, falling back to legacy mode."
+    run_legacy_pipeline "$python_cmd"
+    return
+  fi
 
-# Step 5: URL Updater
-run_script "s5-urlupdater.py" "5" "URL Updater"
+  echo -e "${BOLD}Starting PyMP4HLS Agentic Pipeline at $(date)${NC}"
+  echo "Using Python: $python_cmd"
+  echo "Runner: $agentic_script"
+  echo ""
 
-echo -e "${BOLD}PyMP4HLS Pipeline completed at $(date)${NC}"
-echo -e "${GREEN}${BOLD}All steps have been executed.${NC}"
-echo "Check the log files in $SCRIPT_DIR/logs/ for detailed information on each step."
+  "$python_cmd" "$agentic_script"
+}
+
+main "${1:-}"

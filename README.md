@@ -101,22 +101,30 @@ mkdir -p videos/input videos/output urls uploads logs
 ```
 
 ## Usage
-Run Python scripts & maintain SSH tunnel
-### Make the shell script executable (if not already)
-``` bash
-chmod +x run.sh
+### Run Setup Once
+```bash
+./setup.sh
 ```
-### Run all scripts in the background
-``` bash
-./run.sh &
+
+### Start Pipeline (Recommended: Agentic Runner)
+```bash
+./start.sh
 ```
-### Stop all running scripts
-``` bash
-pkill -f run.sh s1-urlscraper.py s2-downloader.py s3-converter.py s4-uploader.py s5-urlupdater.py
+
+### Start Legacy Mode (Run s1..s5 Directly)
+```bash
+./start.sh --legacy
 ```
-### Check all running scripts
-``` bash
-pgrep -af run.sh s1-urlscraper.py s2-downloader.py s3-converter.py s4-uploader.py s5-urlupdater.py
+
+### Windows Git Bash Notes
+```bash
+source venv/Scripts/activate
+./start.sh
+```
+
+### Stop Running Pipeline Processes
+```bash
+pkill -f "run_agentic.py|run_tunnel.py|run_pipeline.py|s1-urlscraper.py|s2-downloader.py|s3-converter.py|s4-uploader.py|s5-urlupdater.py"
 ```
 
 ## Environment Variables Example
