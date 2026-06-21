@@ -24,6 +24,7 @@ venv/
 ENV/
 env/
 .env
+.env.*
 
 # Media files
 *.mp4

@@ -60,7 +60,7 @@ def find_uploaded_videos():
     Returns a list of dictionaries with hls_name, upload_time, etc.
     """
     uploads_dir = os.getenv('UPLOADS_DIR', './uploads')
-    processed_marker = os.getenv('PROCESSED_MARKER_DIR', os.path.join(uploads_dir, '/processed'))
+    processed_marker = os.getenv('PROCESSED_MARKER_DIR', os.path.join(uploads_dir, 'processed'))
     os.makedirs(processed_marker, exist_ok=True)
     
     hls_videos = []
@@ -164,7 +164,7 @@ def update_database_record(connection, hls_name, hls_path):
 def process_batch_file(connection, batch_files):
     """Mark batch files as processed after all their entries have been handled."""
     uploads_dir = os.getenv('UPLOADS_DIR', './uploads')
-    processed_marker = os.getenv('PROCESSED_MARKER_DIR', os.path.join(uploads_dir, '/processed'))
+    processed_marker = os.getenv('PROCESSED_MARKER_DIR', os.path.join(uploads_dir, 'processed'))
     
     for batch_file in batch_files:
         batch_name = os.path.basename(batch_file)
@@ -241,4 +241,11 @@ if __name__ == "__main__":
         # Wait for the next check interval
         check_interval = int(os.getenv('CHECK_INTERVAL', '300'))
         logger.info(f"Waiting {check_interval} seconds before next database check...")
+
+        # Optional one-shot mode
+        run_once = os.getenv('RUN_ONCE', '').strip().lower() in ('1', 'true', 'yes', 'y')
+        if run_once:
+            logger.info("RUN_ONCE detected — exiting after first cycle.")
+            break
+
         time.sleep(check_interval)

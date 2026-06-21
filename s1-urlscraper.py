@@ -4,6 +4,7 @@ import os
 import time
 import logging
 import glob
+import sys
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -233,4 +234,11 @@ if __name__ == "__main__":
         # Wait before next check
         check_interval = int(os.getenv('CHECK_INTERVAL', '300'))
         logger.info(f"Waiting {check_interval} seconds before next database check...")
+
+        # Optional one-shot mode: if RUN_ONCE is set, exit instead of sleeping
+        run_once = os.getenv('RUN_ONCE', '').strip().lower() in ('1', 'true', 'yes', 'y')
+        if run_once:
+            logger.info("RUN_ONCE detected — exiting after first cycle.")
+            break
+
         time.sleep(check_interval)

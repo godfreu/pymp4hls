@@ -47,15 +47,13 @@ def get_converted_videos(csv_path):
     # Read the existing CSV file
     try:
         df = pd.read_csv(csv_path)
-        # Current logic collects all videos regardless of status
-        if not df.empty and 'original_filename' in df.columns:
-            converted_videos = set(df['original_filename'].tolist())
-
-        # Change to this to enable automatic retry of failed conversions:
+        # Only skip videos that were successfully converted
         if not df.empty and 'original_filename' in df.columns and 'status' in df.columns:
-            # Only skip videos that were successfully converted
             successful_videos = df[df['status'] == 'success']
             converted_videos = set(successful_videos['original_filename'].tolist())
+        elif not df.empty and 'original_filename' in df.columns:
+            # Fallback for old CSV format without status column
+            converted_videos = set(df['original_filename'].tolist())
         return converted_videos
     except Exception as e:
         logger.error(f"Error reading converted videos CSV: {e}")
@@ -372,4 +370,11 @@ if __name__ == "__main__":
     while True:
         convert_to_hls(input_folder, output_folder, resolutions)
         logger.info(f"Waiting {check_interval} seconds for new videos...")
+
+        # Optional one-shot mode
+        run_once = os.getenv('RUN_ONCE', '').strip().lower() in ('1', 'true', 'yes', 'y')
+        if run_once:
+            logger.info("RUN_ONCE detected — exiting after first cycle.")
+            break
+
         time.sleep(check_interval)
